@@ -1,0 +1,1698 @@
+p = peripheral.wrap("top")
+local monitor = peripheral.find("monitor")
+
+monitor.setTextScale(0.5)
+local width, height = monitor.getSize()
+
+local data = {
+    currentFace = "front",
+    faces = {
+        front = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false},
+        back = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false},
+        top = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false},
+        bottom = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false},
+        right = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false},
+        left = {totalTime = 100, keyframes = {}, actions = {}, loopPlay = false}
+    },
+    currentTime = 0,
+    isPlaying = false,
+    playSpeed = 1,
+    redstonePlaying = false,
+    selectedKeyframe = nil,
+    editMode = false,
+    editDeviceMode = false,
+    editingDevice = nil,
+    editingValue = 0,
+    history = {},
+    historyIndex = 0,
+    deviceNames = {},
+    needsRedraw = true,
+    lastRedstoneState = {front = false, back = false, top = false, bottom = false, right = false, left = false},
+    shouldClearScreen = false,
+    isDraggingSlider = false,  -- 标记是否正在拖动滑块
+    scrollOffset = 0,  -- 滚动偏移量
+    selectedDeviceIndex = 1,  -- 选中的设备索引
+    deviceAngles = {},  -- 电机角度缓存
+    globalTime = 0,  -- 全局时钟
+    lastUpdateTime = os.clock(),  -- 上次更新时间
+    interpolationActive = false,  -- 是否正在插值运动
+    interpolationStartTime = 0,  -- 插值开始时间
+    interpolationDuration = 0,  -- 插值持续时间
+    lastDeviceValues = {},  -- 上一次的设备值
+    lastSentAngles = {},  -- 上一次发送的角度值（用于避免重复输出）
+    lastOutputTime = {}  -- 每个设备上次输出的时间
+}
+
+local devices = {
+    group1 = {
+        type = "motor",
+        names = {"test1", "test2"}
+    },
+    group2 = {
+        type = "piston",
+        names = {}
+    },
+    group3 = {
+        type = "motor",
+        names = {}
+    },
+    group4 = {
+        type = "motor",
+        names = {}
+    },
+    group5 = {
+        type = "motor",
+        names = {}
+    }
+}
+
+
+local UI = {
+
+    timelineBar = {x = 5, y = 8, width = width - 10, height = 3},
+
+    keyframeBar = {x = 5, y = 12, width = width - 10, height = 2},
+
+    currentTimeText = {x = 5, y = 15},
+
+    totalTimeText = {x = width - 15, y = 15},
+
+    faceButtons = {
+        front = {x = 2, y = 2, width = 8, height = 3},
+        back = {x = 12, y = 2, width = 8, height = 3},
+        top = {x = 22, y = 2, width = 8, height = 3},
+        bottom = {x = 32, y = 2, width = 8, height = 3},
+        right = {x = 42, y = 2, width = 8, height = 3},
+        left = {x = 52, y = 2, width = 8, height = 3}
+    },
+
+    buttons = {
+        decTime = {x = 5, y = 18, width = 4, height = 2, label = "<"},
+        incTime = {x = 15, y = 18, width = 4, height = 2, label = ">"},
+        dec10Time = {x = 25, y = 18, width = 4, height = 2, label = "<<"},
+        inc10Time = {x = 35, y = 18, width = 4, height = 2, label = ">>"},
+        play = {x = 45, y = 18, width = 8, height = 2, label = "PLAY"},
+        addKeyframe = {x = 65, y = 18, width = 4, height = 2, label = "+KF"},
+        saveKeyframe = {x = 71, y = 18, width = 6, height = 2, label = "SAVKF"},
+        clearKeyframes = {x = 79, y = 18, width = 6, height = 2, label = "CLEAR"},
+        deleteKeyframe = {x = 87, y = 18, width = 6, height = 2, label = "DELKF"},
+        loopToggle = {x = 5, y = 21, width = 10, height = 2, label = "LOOP:OFF"},
+        save = {x = width - 12, y = height - 3, width = 6, height = 2, label = "SAVE"},
+        undo = {x = width - 20, y = height - 3, width = 5, height = 2, label = "UNDO", color = colors.gray},
+        redo = {x = width - 27, y = height - 3, width = 5, height = 2, label = "REDO", color = colors.gray}
+    },
+
+    actionBar = {x = 5, y = 25, width = width - 10, height = 6},
+
+    editButtons = {
+        back = {x = 2, y = height - 3, width = 6, height = 2, label = "BACK"},
+        save = {x = width - 12, y = height - 3, width = 6, height = 2, label = "SAVE"},
+        scrollUp = {x = width - 8, y = 4, width = 6, height = 2, label = "UP"},
+        scrollDown = {x = width - 8, y = height - 8, width = 6, height = 2, label = "DOWN"}
+    },
+
+    deviceEditButtons = {
+        back = {x = 2, y = height - 3, width = 6, height = 2, label = "BACK"},
+        save = {x = width - 12, y = height - 3, width = 6, height = 2, label = "SAVE"},
+        dec0_1 = {x = 20, y = 8, width = 5, height = 2, label = "-0.1"},
+        inc0_1 = {x = 27, y = 8, width = 5, height = 2, label = "+0.1"},
+        dec0_01 = {x = 34, y = 8, width = 5, height = 2, label = "-0.01"},
+        inc0_01 = {x = 41, y = 8, width = 5, height = 2, label = "+0.01"},
+        dec1 = {x = 20, y = 12, width = 5, height = 2, label = "-1"},
+        inc1 = {x = 27, y = 12, width = 5, height = 2, label = "+1"},
+        dec10 = {x = 34, y = 12, width = 5, height = 2, label = "-10"},
+        inc10 = {x = 41, y = 12, width = 5, height = 2, label = "+10"},
+        setZero = {x = 48, y = 12, width = 8, height = 2, label = "SET 0"}
+    },
+
+    motorSlider = {x = 10, y = 12, width = width - 20, height = 3}
+}
+
+
+local function normalizeAngle(angle)
+
+    while angle > math.pi do
+        angle = angle - 2 * math.pi
+    end
+    while angle < -math.pi do
+        angle = angle + 2 * math.pi
+    end
+    return angle
+end
+
+local function getShortestAngleDifference(currentAngle, targetAngle)
+    currentAngle = normalizeAngle(currentAngle)
+    targetAngle = normalizeAngle(targetAngle)
+
+    local diff = targetAngle - currentAngle
+
+    if diff > math.pi then
+        diff = diff - 2 * math.pi
+    elseif diff < -math.pi then
+        diff = diff + 2 * math.pi
+    end
+    
+    return diff
+end
+
+local function isPointInRect(x, y, rect)
+    return x >= rect.x and x < rect.x + rect.width and
+           y >= rect.y and y < rect.y + rect.height
+end
+
+local function getCurrentFaceData()
+    return data.faces[data.currentFace]
+end
+
+local function deepCopy(original)
+    local copy = {}
+    for k, v in pairs(original) do
+        if type(v) == "table" then
+            v = deepCopy(v)
+        end
+        copy[k] = v
+    end
+    return copy
+end
+
+local function saveHistory()
+    while #data.history > data.historyIndex do
+        table.remove(data.history, #data.history)
+    end
+
+    local state = {
+        currentFace = data.currentFace,
+        currentTime = data.currentTime,
+        selectedKeyframe = data.selectedKeyframe,
+        faces = {}
+    }
+    
+    for face, faceData in pairs(data.faces) do
+        state.faces[face] = {
+            totalTime = faceData.totalTime,
+            loopPlay = faceData.loopPlay,
+            keyframes = {},
+            actions = {}
+        }
+        
+        for i, kf in ipairs(faceData.keyframes) do
+            state.faces[face].keyframes[i] = {
+                time = kf.time,
+                actions = {}
+            }
+            for name, angle in pairs(kf.actions) do
+                state.faces[face].keyframes[i].actions[name] = angle
+            end
+        end
+    end
+    
+    table.insert(data.history, state)
+    data.historyIndex = #data.history
+
+    UI.buttons.undo.color = (data.historyIndex > 1) and colors.lightGray or colors.gray
+    UI.buttons.redo.color = (data.historyIndex < #data.history) and colors.lightGray or colors.gray
+end
+
+local function undo()
+    if data.historyIndex > 1 then
+        data.historyIndex = data.historyIndex - 1
+        local state = data.history[data.historyIndex]
+        
+        data.currentFace = state.currentFace
+        data.currentTime = state.currentTime
+        data.selectedKeyframe = state.selectedKeyframe
+        
+        for face, faceData in pairs(state.faces) do
+            if data.faces[face] then
+                data.faces[face].totalTime = faceData.totalTime or 100
+                data.faces[face].loopPlay = faceData.loopPlay or false
+                data.faces[face].keyframes = {}
+                
+                for i, kf in ipairs(faceData.keyframes) do
+                    data.faces[face].keyframes[i] = {
+                        time = kf.time,
+                        actions = {}
+                    }
+                    for name, angle in pairs(kf.actions) do
+                        data.faces[face].keyframes[i].actions[name] = angle
+                    end
+                end
+            end
+        end
+        
+        UI.buttons.undo.color = (data.historyIndex > 1) and colors.lightGray or colors.gray
+        UI.buttons.redo.color = (data.historyIndex < #data.history) and colors.lightGray or colors.gray
+        
+        data.shouldClearScreen = true
+        data.needsRedraw = true
+        return true
+    end
+    return false
+end
+
+local function redo()
+    if data.historyIndex < #data.history then
+        data.historyIndex = data.historyIndex + 1
+        local state = data.history[data.historyIndex]
+        
+        data.currentFace = state.currentFace
+        data.currentTime = state.currentTime
+        data.selectedKeyframe = state.selectedKeyframe
+        
+        for face, faceData in pairs(state.faces) do
+            if data.faces[face] then
+                data.faces[face].totalTime = faceData.totalTime or 100
+                data.faces[face].loopPlay = faceData.loopPlay or false
+                data.faces[face].keyframes = {}
+                
+                for i, kf in ipairs(faceData.keyframes) do
+                    data.faces[face].keyframes[i] = {
+                        time = kf.time,
+                        actions = {}
+                    }
+                    for name, angle in pairs(kf.actions) do
+                        data.faces[face].keyframes[i].actions[name] = angle
+                    end
+                end
+            end
+        end
+
+        UI.buttons.undo.color = (data.historyIndex > 1) and colors.lightGray or colors.gray
+        UI.buttons.redo.color = (data.historyIndex < #data.history) and colors.lightGray or colors.gray
+        
+        data.shouldClearScreen = true
+        data.needsRedraw = true
+        return true
+    end
+    return false
+end
+
+saveHistory()
+
+local function loadData()
+    if fs.exists("timeline_data.txt") then
+        local file = fs.open("timeline_data.txt", "r")
+        local content = file.readAll()
+        file.close()
+        
+        local saved = textutils.unserialize(content)
+        if saved then
+            for face, faceData in pairs(saved.faces or {}) do
+                if data.faces[face] then
+                    data.faces[face].totalTime = faceData.totalTime or 100
+                    data.faces[face].loopPlay = faceData.loopPlay or false
+                    data.faces[face].keyframes = faceData.keyframes or {}
+                    data.faces[face].actions = faceData.actions or {}
+                end
+            end
+            saveHistory()
+        end
+    end
+end
+
+local function saveData()
+    local file = fs.open("timeline_data.txt", "w")
+    file.write(textutils.serialize({
+        faces = data.faces
+    }))
+    file.close()
+end
+
+local function getDeviceNames()
+    local names = {}
+    for _, deviceGroup in pairs(devices) do
+        for _, name in ipairs(deviceGroup.names) do
+            table.insert(names, {
+                name = name,
+                type = deviceGroup.type
+            })
+        end
+    end
+    return names
+end
+
+local function getGroupedDevices()
+    return devices
+end
+
+local function getDeviceType(deviceName)
+    for _, deviceGroup in pairs(devices) do
+        for _, name in ipairs(deviceGroup.names) do
+            if name == deviceName then
+                return deviceGroup.type
+            end
+        end
+    end
+    return "motor" 
+end
+
+data.deviceNames = getDeviceNames()
+
+local function drawButton(button)
+    if button.color then
+        monitor.setBackgroundColor(button.color)
+    else
+        monitor.setBackgroundColor(colors.lightGray)
+    end
+    monitor.setTextColor(colors.black)
+    
+    for dx = 0, button.width - 1 do
+        for dy = 0, button.height - 1 do
+            monitor.setCursorPos(button.x + dx, button.y + dy)
+            monitor.write(" ")
+        end
+    end
+    
+    local labelX = button.x + math.floor((button.width - #button.label) / 2)
+    local labelY = button.y + math.floor(button.height / 2)
+    monitor.setCursorPos(labelX, labelY)
+    monitor.write(button.label)
+end
+
+local function drawFaceButtons()
+    for face, button in pairs(UI.faceButtons) do
+        if face == data.currentFace then
+            monitor.setBackgroundColor(colors.blue)
+            monitor.setTextColor(colors.white)
+        else
+            monitor.setBackgroundColor(colors.lightGray)
+            monitor.setTextColor(colors.black)
+        end
+        
+        for dx = 0, button.width - 1 do
+            for dy = 0, button.height - 1 do
+                monitor.setCursorPos(button.x + dx, button.y + dy)
+                monitor.write(" ")
+            end
+        end
+        
+        local labelX = button.x + math.floor((button.width - #face:upper()) / 2)
+        local labelY = button.y + math.floor(button.height / 2)
+        monitor.setCursorPos(labelX, labelY)
+        monitor.write(face:upper())
+    end
+end
+
+local function drawTimelineBar()
+    local faceData = getCurrentFaceData()
+    local bar = UI.timelineBar
+
+    monitor.setBackgroundColor(colors.gray)
+    for dx = 0, bar.width - 1 do
+        for dy = 0, bar.height - 1 do
+            monitor.setCursorPos(bar.x + dx, bar.y + dy)
+            monitor.write(" ")
+        end
+    end
+
+    local fillWidth = math.floor((data.currentTime / faceData.totalTime) * (bar.width - 2))
+    monitor.setBackgroundColor(colors.green)
+    for dx = 0, fillWidth do
+        for dy = 0, bar.height - 1 do
+            monitor.setCursorPos(bar.x + 1 + dx, bar.y + dy)
+            monitor.write(" ")
+        end
+    end
+
+    local sliderPos = bar.x + 1 + math.floor((data.currentTime / faceData.totalTime) * (bar.width - 3))
+    monitor.setBackgroundColor(colors.red)
+    for dy = 0, bar.height - 1 do
+        monitor.setCursorPos(sliderPos, bar.y + dy)
+        monitor.write("|")
+    end
+
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.setCursorPos(bar.x, bar.y - 1)
+    monitor.write("Timeline: ")
+end
+
+local function drawKeyframeBar()
+    local faceData = getCurrentFaceData()
+    local bar = UI.keyframeBar
+
+    monitor.setBackgroundColor(colors.gray)
+    for dx = 0, bar.width - 1 do
+        for dy = 0, bar.height - 1 do
+            monitor.setCursorPos(bar.x + dx, bar.y + dy)
+            monitor.write(" ")
+        end
+    end
+
+    for i, kf in ipairs(faceData.keyframes) do
+        local kfPos = bar.x + 1 + math.floor((kf.time / faceData.totalTime) * (bar.width - 3))
+        if i == data.selectedKeyframe then
+            monitor.setBackgroundColor(colors.orange)
+        else
+            monitor.setBackgroundColor(colors.blue)
+        end
+        for dy = 0, bar.height - 1 do
+            monitor.setCursorPos(kfPos, bar.y + dy)
+            monitor.write("=")
+        end
+    end
+    
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.setCursorPos(bar.x, bar.y - 1)
+    monitor.write("Keyframes: ")
+end
+
+local function drawTimeDisplay()
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+
+    monitor.setCursorPos(UI.currentTimeText.x, UI.currentTimeText.y)
+    monitor.write("Current: " .. data.currentTime .. "t")
+
+    local faceData = getCurrentFaceData()
+    monitor.setCursorPos(UI.totalTimeText.x, UI.totalTimeText.y)
+    monitor.write("Total: " .. faceData.totalTime .. "t")
+end
+
+local function drawActionBar()
+    local faceData = getCurrentFaceData()
+    local bar = UI.actionBar
+
+    monitor.setBackgroundColor(colors.black)
+    for dx = 0, bar.width - 1 do
+        for dy = 0, bar.height - 1 do
+            monitor.setCursorPos(bar.x + dx, bar.y + dy)
+            monitor.write(" ")
+        end
+    end
+
+    monitor.setCursorPos(bar.x, bar.y)
+    monitor.write("Actions: ")
+    
+    local yOffset = 1
+
+    if data.selectedKeyframe and faceData.keyframes[data.selectedKeyframe] then
+        local selectedKF = faceData.keyframes[data.selectedKeyframe]
+        monitor.setCursorPos(bar.x, bar.y + yOffset)
+        monitor.write("Selected KF at " .. selectedKF.time .. "t")
+        yOffset = yOffset + 1
+        
+        local deviceCount = 0
+        for deviceName, value in pairs(selectedKF.actions) do
+            local deviceType = getDeviceType(deviceName)
+            local unit = (deviceType == "motor") and "rad" or "dist"
+            monitor.setCursorPos(bar.x, bar.y + yOffset)
+            monitor.write(deviceName .. ": " .. string.format("%.2f", value) .. " " .. unit)
+            yOffset = yOffset + 1
+            deviceCount = deviceCount + 1
+            if yOffset >= bar.height then break end
+        end
+
+        if deviceCount > 0 then
+            monitor.setCursorPos(bar.x, bar.y + yOffset)
+            monitor.write("Click on device name to edit")
+        end
+    else
+        for _, kf in ipairs(faceData.keyframes) do
+            if kf.time == data.currentTime then
+                monitor.setCursorPos(bar.x, bar.y + yOffset)
+                monitor.write("KF at " .. kf.time .. "t:")
+                yOffset = yOffset + 1
+                
+                for deviceName, value in pairs(kf.actions) do
+                    local deviceType = getDeviceType(deviceName)
+                    local unit = (deviceType == "motor") and "rad" or "dist"
+                    monitor.setCursorPos(bar.x, bar.y + yOffset)
+                    monitor.write(deviceName .. ": " .. string.format("%.2f", value) .. " " .. unit)
+                    yOffset = yOffset + 1
+                    if yOffset >= bar.height then break end
+                end
+                break
+            end
+        end
+
+        if yOffset == 1 then
+            monitor.setCursorPos(bar.x, bar.y + 1)
+            monitor.write("No keyframe at current time")
+        end
+    end
+end
+
+local function drawControlButtons()
+    local faceData = getCurrentFaceData()
+    UI.buttons.loopToggle.label = "LOOP:" .. (faceData.loopPlay and "ON" or "OFF")
+
+    if data.isPlaying then
+        UI.buttons.play.label = "PAUSE"
+    else
+        UI.buttons.play.label = "PLAY"
+    end
+    
+    for btnName, button in pairs(UI.buttons) do
+        drawButton(button)
+    end
+end
+
+local function drawMotorSlider()
+    local slider = UI.motorSlider
+    local angle = data.editingValue
+
+    monitor.setBackgroundColor(colors.gray)
+    for dx = 0, slider.width - 1 do
+        for dy = 0, slider.height - 1 do
+            monitor.setCursorPos(slider.x + dx, slider.y + dy)
+            monitor.write(" ")
+        end
+    end
+
+    local normalizedAngle = (angle + math.pi) / (2 * math.pi)
+    local sliderPos = slider.x + 1 + math.floor(normalizedAngle * (slider.width - 3))
+
+    monitor.setBackgroundColor(colors.red)
+    for dy = 0, slider.height - 1 do
+        monitor.setCursorPos(sliderPos, slider.y + dy)
+        monitor.write("=")
+    end
+
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.setCursorPos(2, slider.y - 1)
+    monitor.write(data.editingDevice .. ": " .. string.format("%.3f", angle) .. " rad")
+    
+    -- 绘制角度范围标记
+    monitor.setCursorPos(slider.x, slider.y + slider.height)
+    monitor.write("-π")
+    monitor.setCursorPos(slider.x + slider.width - 2, slider.y + slider.height)
+    monitor.write("+π")
+end
+
+local function drawDeviceEditMode()
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    
+    local faceData = getCurrentFaceData()
+    
+    if not data.selectedKeyframe or not faceData.keyframes[data.selectedKeyframe] then
+        print("No keyframe selected")
+        data.editDeviceMode = false
+        data.shouldClearScreen = true
+        data.needsRedraw = true
+        return
+    end
+    
+    local keyframe = faceData.keyframes[data.selectedKeyframe]
+    
+    if not data.editingDevice then
+        data.editingDevice = data.deviceNames[1].name
+    end
+    
+    local deviceType = getDeviceType(data.editingDevice)
+
+    if data.editingValue == 0 then
+        data.editingValue = keyframe.actions[data.editingDevice] or 0
+    end
+
+    monitor.setCursorPos(2, 2)
+    monitor.write("Editing " .. data.editingDevice .. " (" .. deviceType .. ") at KF " .. keyframe.time .. "t")
+    
+    if deviceType == "motor" then
+        drawButton(UI.deviceEditButtons.dec0_1)
+        drawButton(UI.deviceEditButtons.inc0_1)
+        drawButton(UI.deviceEditButtons.dec0_01)
+        drawButton(UI.deviceEditButtons.inc0_01)
+
+        drawMotorSlider()
+
+        monitor.setCursorPos(2, 16)
+        monitor.write("Angle: " .. string.format("%.3f", data.editingValue) .. " rad")
+
+        monitor.setCursorPos(2, 17)
+        monitor.write("Range: -π to +π (-3.14 to +3.14)")
+
+        monitor.setCursorPos(2, 19)
+        monitor.write("Drag slider or use +/- buttons")
+    else
+        drawButton(UI.deviceEditButtons.dec10)
+        drawButton(UI.deviceEditButtons.inc10)
+        drawButton(UI.deviceEditButtons.dec1)
+        drawButton(UI.deviceEditButtons.inc1)
+        drawButton(UI.deviceEditButtons.setZero)
+
+        monitor.setCursorPos(2, 12)
+        monitor.write("Current distance: " .. string.format("%.0f", data.editingValue))
+
+        monitor.setCursorPos(2, 14)
+        monitor.write("Range: -1000 to +1000")
+
+        monitor.setCursorPos(2, 16)
+        monitor.write("Use +/- buttons to adjust")
+        monitor.setCursorPos(2, 17)
+        monitor.write("SET 0 to reset to zero")
+    end
+
+    drawButton(UI.deviceEditButtons.back)
+    drawButton(UI.deviceEditButtons.save)
+end
+
+local function drawEditMode()
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    
+    local faceData = getCurrentFaceData()
+    
+    if not data.selectedKeyframe or not faceData.keyframes[data.selectedKeyframe] then
+        data.editMode = false
+        data.shouldClearScreen = true
+        data.needsRedraw = true
+        return
+    end
+    
+    local keyframe = faceData.keyframes[data.selectedKeyframe]
+    
+    monitor.setCursorPos(2, 2)
+    monitor.write("Editing KF at " .. keyframe.time .. "t (Click device to edit)")
+    
+    drawButton(UI.editButtons.scrollUp)
+    drawButton(UI.editButtons.scrollDown)
+    
+    local maxDevices = height - 10 
+    local groupedDevices = getGroupedDevices()
+
+    local y = 4
+    local currentIndex = 0
+    
+    for groupName, deviceGroup in pairs(groupedDevices) do
+        if currentIndex >= data.scrollOffset then
+            monitor.setCursorPos(2, y)
+            monitor.write("[" .. groupName .. " - " .. deviceGroup.type .. "]")
+            y = y + 1
+            
+            if y > maxDevices then break end
+
+            for _, deviceName in ipairs(deviceGroup.names) do
+                if currentIndex >= data.scrollOffset then
+                    local value = keyframe.actions[deviceName] or 0
+                    local unit = (deviceGroup.type == "motor") and "rad" or "dist"
+                    local displayStr = deviceName .. ": " .. string.format("%.2f", value) .. " " .. unit
+
+                    if data.selectedDeviceIndex == currentIndex + 1 then
+                        monitor.setBackgroundColor(colors.blue)
+                        monitor.setTextColor(colors.white)
+                        monitor.setCursorPos(2, y)
+                        monitor.write(" " .. displayStr .. " ")
+                        monitor.setBackgroundColor(colors.black)
+                        monitor.setTextColor(colors.white)
+                    else
+                        monitor.setCursorPos(2, y)
+                        monitor.write(" " .. displayStr)
+                    end
+                    
+                    y = y + 1
+                    if y > maxDevices then break end
+                end
+                currentIndex = currentIndex + 1
+            end
+            
+            if y > maxDevices then break end
+            y = y + 1
+        else
+            currentIndex = currentIndex + #deviceGroup.names + 1
+        end
+    end
+
+    monitor.setCursorPos(2, height - 6)
+    monitor.write("Showing " .. math.min(#data.deviceNames + 5, maxDevices) .. " of " .. (#data.deviceNames + 5) .. " items")
+
+    drawButton(UI.editButtons.back)
+    drawButton(UI.editButtons.save)
+end
+
+local function clearAndDrawMain()
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    drawFaceButtons()
+    drawTimelineBar()
+    drawKeyframeBar()
+    drawTimeDisplay()
+    drawActionBar()
+    drawControlButtons()
+end
+
+local function drawAll()
+    if data.shouldClearScreen then
+        monitor.setBackgroundColor(colors.black)
+        monitor.clear()
+        data.shouldClearScreen = false
+    end
+    
+    if data.editDeviceMode then
+        drawDeviceEditMode()
+    elseif data.editMode then
+        drawEditMode()
+    else
+        clearAndDrawMain()
+    end
+    data.needsRedraw = false
+end
+
+local function getDeviceValues()
+    local values = {}
+    for _, deviceGroup in pairs(devices) do
+        for _, deviceName in ipairs(deviceGroup.names) do
+            if deviceGroup.type == "motor" then
+                local value = p.callRemote(deviceName, "getTargetValue") or p.callRemote(deviceName, "getControlTarget")
+                if value then
+                    values[deviceName] = value
+                else
+                    values[deviceName] = 0
+                end
+            else
+                local value = p.callRemote(deviceName, "getDistance")
+                if value then
+                    values[deviceName] = value
+                else
+                    values[deviceName] = 0
+                end
+            end
+        end
+    end
+    
+    return values
+end
+
+local function setDeviceValueImmediate(deviceName, targetValue)
+    local deviceType = getDeviceType(deviceName)
+    local currentTime = os.clock()
+    
+    if deviceType == "motor" then
+        local currentAngle = data.deviceAngles[deviceName] or 0
+        local normalizedTarget = normalizeAngle(targetValue)
+        
+        local shortestDiff = getShortestAngleDifference(currentAngle, normalizedTarget)
+
+        local lastSentAngle = data.lastSentAngles[deviceName] or 0
+        local lastOutputTime = data.lastOutputTime[deviceName] or 0
+        local angleDiff = math.abs(shortestDiff)
+
+        local shouldOutput = false
+        
+        if angleDiff > 0.001 then
+            shouldOutput = true
+        elseif currentTime - lastOutputTime > 0.5 then
+            shouldOutput = true
+        end
+        
+        if shouldOutput then
+            if math.abs(shortestDiff) < 0.001 then
+                p.callRemote(deviceName, "setTargetValue", normalizedTarget)
+                p.callRemote(deviceName, "setControlTarget", normalizedTarget)
+                data.deviceAngles[deviceName] = normalizedTarget
+            else
+                local finalAngle = currentAngle + shortestDiff
+                p.callRemote(deviceName, "setTargetValue", finalAngle)
+                p.callRemote(deviceName, "setControlTarget", finalAngle)
+                data.deviceAngles[deviceName] = finalAngle
+            end
+
+            data.lastSentAngles[deviceName] = normalizedTarget
+            data.lastOutputTime[deviceName] = currentTime
+
+            data.lastDeviceValues[deviceName] = normalizedTarget
+        end
+    else
+        local lastSentValue = data.lastSentAngles[deviceName] or 0
+        local lastOutputTime = data.lastOutputTime[deviceName] or 0
+        local valueDiff = math.abs(targetValue - lastSentValue)
+        
+        local shouldOutput = false
+        
+        if valueDiff > 0.1 then
+            shouldOutput = true
+        elseif currentTime - lastOutputTime > 0.5 then
+            shouldOutput = true
+        end
+        
+        if shouldOutput then
+            p.callRemote(deviceName, "setTargetValue", targetValue)
+            data.lastSentAngles[deviceName] = targetValue
+            data.lastOutputTime[deviceName] = currentTime
+            data.lastDeviceValues[deviceName] = targetValue
+        end
+    end
+end
+
+local function updateDevicesBasedOnGlobalTime()
+    local faceData = getCurrentFaceData()
+    local keyframes = faceData.keyframes
+    
+    if #keyframes == 0 then
+        return
+    end
+    local time = data.currentTime
+
+    local prevKF, nextKF
+    local prevIndex, nextIndex
+    
+    for i, kf in ipairs(keyframes) do
+        if kf.time <= time then
+            prevKF = kf
+            prevIndex = i
+        end
+        if kf.time >= time then
+            nextKF = kf
+            nextIndex = i
+            break
+        end
+    end
+
+    if not prevKF and nextKF then
+        for deviceName, value in pairs(nextKF.actions) do
+            setDeviceValueImmediate(deviceName, value)
+        end
+        return
+    end
+    
+    if prevKF and not nextKF then
+        for deviceName, value in pairs(prevKF.actions) do
+            setDeviceValueImmediate(deviceName, value)
+        end
+        return
+    end
+    
+    if prevKF and nextKF and prevKF.time == nextKF.time then
+        for deviceName, value in pairs(prevKF.actions) do
+            setDeviceValueImmediate(deviceName, value)
+        end
+        return
+    end
+    if prevKF and nextKF then
+        local startTime = prevKF.time
+        local endTime = nextKF.time
+        local duration = endTime - startTime
+        local elapsed = time - startTime
+        local progress = (duration > 0) and (elapsed / duration) or 0
+        
+        progress = math.max(0, math.min(1, progress))
+        
+        for _, deviceInfo in ipairs(data.deviceNames) do
+            local deviceName = deviceInfo.name
+            local deviceType = deviceInfo.type
+            
+            local startValue = prevKF.actions[deviceName] or data.lastDeviceValues[deviceName] or 0
+            local endValue = nextKF.actions[deviceName] or data.lastDeviceValues[deviceName] or 0
+            
+            if deviceType == "motor" then
+                local normalizedStart = normalizeAngle(startValue)
+                local normalizedEnd = normalizeAngle(endValue)
+
+                local shortestDiff = getShortestAngleDifference(normalizedStart, normalizedEnd)
+
+                local currentAngle = normalizedStart + shortestDiff * progress
+
+                currentAngle = normalizeAngle(currentAngle)
+
+                setDeviceValueImmediate(deviceName, currentAngle)
+            else
+                local currentValue = startValue + (endValue - startValue) * progress
+                
+                if currentValue < -1000 then currentValue = -1000 end
+                if currentValue > 1000 then currentValue = 1000 end
+
+                setDeviceValueImmediate(deviceName, currentValue)
+            end
+        end
+    end
+end
+
+local function globalTimeThread()
+    while true do
+        if data.isPlaying then
+            local currentTime = os.clock()
+            local deltaTime = currentTime - data.lastUpdateTime
+            data.lastUpdateTime = currentTime
+
+            data.globalTime = data.globalTime + deltaTime
+
+            data.currentTime = data.currentTime + (deltaTime * data.playSpeed * 20)  -- 假设20t/s
+            
+            local faceData = getCurrentFaceData()
+
+            if data.currentTime >= faceData.totalTime then
+                if faceData.loopPlay then
+                    data.currentTime = 0
+                    data.globalTime = 0
+                else
+                    data.isPlaying = false
+                    data.currentTime = 0
+                    data.globalTime = 0
+                    data.shouldClearScreen = true
+                    data.needsRedraw = true
+                end
+            end
+            data.currentTime = math.min(data.currentTime, faceData.totalTime)
+            updateDevicesBasedOnGlobalTime()
+
+            data.needsRedraw = true
+
+            sleep(0.05)
+        else
+            local faceData = getCurrentFaceData()
+            local time = data.currentTime
+
+            local closestKF = nil
+            local minDiff = math.huge
+            
+            for _, kf in ipairs(faceData.keyframes) do
+                local diff = math.abs(kf.time - time)
+                if diff < minDiff then
+                    minDiff = diff
+                    closestKF = kf
+                end
+            end
+            if closestKF and minDiff < 2 then
+                for deviceName, value in pairs(closestKF.actions) do
+                    setDeviceValueImmediate(deviceName, value)
+                end
+            end
+            
+            -- 更新显示
+            data.needsRedraw = true
+            sleep(0.1)
+        end
+    end
+end
+
+local function updateDisplayThread()
+    while true do
+        if data.needsRedraw then
+            if data.editDeviceMode then
+                drawDeviceEditMode()
+            elseif data.editMode then
+                drawEditMode()
+            else
+                if data.shouldClearScreen then
+                    clearAndDrawMain()
+                    data.shouldClearScreen = false
+                else
+                    drawTimelineBar()
+                    drawKeyframeBar()
+                    drawTimeDisplay()
+                    drawActionBar()
+                    if data.isPlaying then
+                        UI.buttons.play.label = "PAUSE"
+                    else
+                        UI.buttons.play.label = "PLAY"
+                    end
+                    drawButton(UI.buttons.play)
+
+                    local faceData = getCurrentFaceData()
+                    UI.buttons.loopToggle.label = "LOOP:" .. (faceData.loopPlay and "ON" or "OFF")
+                    drawButton(UI.buttons.loopToggle)
+                end
+            end
+            data.needsRedraw = false
+        end
+        sleep(0.1)
+    end
+end
+
+local function handleRedstone()
+    while true do
+        sleep(0.1)
+
+        for face, _ in pairs(data.faces) do
+            local currentState = redstone.getAnalogInput(face) > 0
+
+            if currentState ~= data.lastRedstoneState[face] then
+                data.lastRedstoneState[face] = currentState
+                
+                if currentState then
+                    if data.currentFace ~= face then
+                        data.currentFace = face
+                        data.currentTime = 0
+                        data.globalTime = 0
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    end
+
+                    data.redstonePlaying = true
+                    data.isPlaying = true
+                    data.lastUpdateTime = os.clock()
+                else
+                    if data.redstonePlaying then
+                        local faceData = getCurrentFaceData()
+                        
+                        if faceData.loopPlay then
+                            data.isPlaying = false
+                            data.shouldClearScreen = true
+                            data.needsRedraw = true
+                        else
+                            data.isPlaying = false
+                            data.currentTime = 0
+                            data.globalTime = 0
+                            data.shouldClearScreen = true
+                            data.needsRedraw = true
+                        end
+                        
+                        data.redstonePlaying = false
+                    end
+                end
+            end
+        end
+    end
+end
+local function addKeyframe()
+    local faceData = getCurrentFaceData()
+    for i, kf in ipairs(faceData.keyframes) do
+        if kf.time == data.currentTime then
+            return false
+        end
+    end
+    local values = getDeviceValues()
+
+    for deviceName, value in pairs(values) do
+        local deviceType = getDeviceType(deviceName)
+        if deviceType == "motor" then
+            values[deviceName] = normalizeAngle(value)
+        end
+    end
+
+    local newKeyframe = {
+        time = data.currentTime,
+        actions = values
+    }
+
+    local inserted = false
+    for i = 1, #faceData.keyframes do
+        if data.currentTime < faceData.keyframes[i].time then
+            table.insert(faceData.keyframes, i, newKeyframe)
+            inserted = true
+            data.selectedKeyframe = i
+            break
+        end
+    end
+    
+    if not inserted then
+        table.insert(faceData.keyframes, newKeyframe)
+        data.selectedKeyframe = #faceData.keyframes
+    end
+    
+    saveHistory()
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+    return true
+end
+
+local function saveSelectedKeyframe()
+    if not data.selectedKeyframe then
+        return false
+    end
+    
+    local faceData = getCurrentFaceData()
+    if not faceData.keyframes[data.selectedKeyframe] then
+        return false
+    end
+    
+    local values = getDeviceValues()
+
+    for deviceName, value in pairs(values) do
+        local deviceType = getDeviceType(deviceName)
+        if deviceType == "motor" then
+            values[deviceName] = normalizeAngle(value)
+        end
+    end
+
+    faceData.keyframes[data.selectedKeyframe].actions = values
+    
+    saveHistory()
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+    return true
+end
+
+local function deleteSelectedKeyframe()
+    local faceData = getCurrentFaceData()
+    
+    if data.selectedKeyframe and faceData.keyframes[data.selectedKeyframe] then
+        table.remove(faceData.keyframes, data.selectedKeyframe)
+        data.selectedKeyframe = nil
+        saveHistory()
+        data.shouldClearScreen = true
+        data.needsRedraw = true
+        return true
+    end
+    
+    for i, kf in ipairs(faceData.keyframes) do
+        if kf.time == data.currentTime then
+            table.remove(faceData.keyframes, i)
+            if data.selectedKeyframe == i then
+                data.selectedKeyframe = nil
+            elseif data.selectedKeyframe and data.selectedKeyframe > i then
+                data.selectedKeyframe = data.selectedKeyframe - 1
+            end
+            saveHistory()
+            data.shouldClearScreen = true
+            data.needsRedraw = true
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function clearAllKeyframes()
+    local faceData = getCurrentFaceData()
+    faceData.keyframes = {}
+    data.selectedKeyframe = nil
+    saveHistory()
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+local function toggleLoopPlay()
+    local faceData = getCurrentFaceData()
+    faceData.loopPlay = not faceData.loopPlay
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+local function stopPlayback()
+    data.isPlaying = false
+    data.redstonePlaying = false
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+local function startPlayback()
+    data.isPlaying = true
+    data.redstonePlaying = false
+    data.lastUpdateTime = os.clock()
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+local function togglePlayback()
+    if data.isPlaying then
+        stopPlayback()
+    else
+        startPlayback()
+    end
+end
+
+local function selectKeyframeAtTime(time)
+    local faceData = getCurrentFaceData()
+    
+    for i, kf in ipairs(faceData.keyframes) do
+        if math.abs(kf.time - time) <= 2 then
+            data.selectedKeyframe = i
+            data.currentTime = kf.time
+            for deviceName, value in pairs(kf.actions) do
+                local deviceType = getDeviceType(deviceName)
+                if deviceType == "motor" then
+                    setDeviceValueImmediate(deviceName, normalizeAngle(value))
+                else
+                    setDeviceValueImmediate(deviceName, value)
+                end
+            end
+            data.shouldClearScreen = true
+            data.needsRedraw = true
+            return true
+        end
+    end
+    
+    return false
+end
+local function enterDeviceEditMode(deviceName)
+    if not data.selectedKeyframe then
+        return false
+    end
+    
+    local faceData = getCurrentFaceData()
+    local keyframe = faceData.keyframes[data.selectedKeyframe]
+    if not keyframe then
+        return false
+    end
+    
+    data.editDeviceMode = true
+    data.editingDevice = deviceName
+    data.editingValue = keyframe.actions[data.editingDevice] or 0
+    data.isDraggingSlider = false
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+    return true
+end
+
+local function exitDeviceEditMode(save)
+    if save and data.editingDevice and data.editingValue then
+        local faceData = getCurrentFaceData()
+        local keyframe = faceData.keyframes[data.selectedKeyframe]
+        
+        if keyframe then
+            keyframe.actions[data.editingDevice] = data.editingValue
+            saveHistory()
+        end
+    end
+    
+    data.editDeviceMode = false
+    data.editingDevice = nil
+    data.editingValue = 0
+    data.isDraggingSlider = false
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+local function enterEditMode()
+    if not data.selectedKeyframe then
+        return false
+    end
+    
+    data.editMode = true
+    data.scrollOffset = 0
+    data.selectedDeviceIndex = 1
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+    return true
+end
+
+-- 退出编辑模式
+local function exitEditMode()
+    data.editMode = false
+    data.scrollOffset = 0
+    data.selectedDeviceIndex = 1
+    data.shouldClearScreen = true
+    data.needsRedraw = true
+end
+
+-- 根据索引获取设备名称
+local function getDeviceByIndex(index)
+    local groupedDevices = getGroupedDevices()
+    local currentIndex = 0
+    
+    for _, deviceGroup in pairs(groupedDevices) do
+        currentIndex = currentIndex + 1  -- 组标题占一个索引
+        
+        for _, deviceName in ipairs(deviceGroup.names) do
+            currentIndex = currentIndex + 1
+            if currentIndex == index then
+                return deviceName
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- 获取总项目数（包括组标题）
+local function getTotalItemsCount()
+    local groupedDevices = getGroupedDevices()
+    local count = 0
+    
+    for _, deviceGroup in pairs(groupedDevices) do
+        count = count + 1
+        count = count + #deviceGroup.names 
+    end
+    
+    return count
+end
+
+local function handleDeviceEditModeTouch(x, y)
+    for btnName, button in pairs(UI.deviceEditButtons) do
+        if isPointInRect(x, y, button) then
+            if btnName == "back" then
+                exitDeviceEditMode(false)
+            elseif btnName == "save" then
+                exitDeviceEditMode(true)
+            else
+                local deviceType = getDeviceType(data.editingDevice)
+                
+                if deviceType == "motor" then
+                    if btnName == "dec0_1" then
+                        data.editingValue = data.editingValue - 0.1
+                        if data.editingValue < -math.pi then
+                            data.editingValue = -math.pi
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "inc0_1" then
+                        data.editingValue = data.editingValue + 0.1
+                        if data.editingValue > math.pi then
+                            data.editingValue = math.pi
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "dec0_01" then
+                        data.editingValue = data.editingValue - 0.01
+                        if data.editingValue < -math.pi then
+                            data.editingValue = -math.pi
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "inc0_01" then
+                        data.editingValue = data.editingValue + 0.01
+                        if data.editingValue > math.pi then
+                            data.editingValue = math.pi
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    end
+                else
+                    if btnName == "dec10" then
+                        data.editingValue = data.editingValue - 10
+                        if data.editingValue < -1000 then
+                            data.editingValue = -1000
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "inc10" then
+                        data.editingValue = data.editingValue + 10
+                        if data.editingValue > 1000 then
+                            data.editingValue = 1000
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "dec1" then
+                        data.editingValue = data.editingValue - 1
+                        if data.editingValue < -1000 then
+                            data.editingValue = -1000
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "inc1" then
+                        data.editingValue = data.editingValue + 1
+                        if data.editingValue > 1000 then
+                            data.editingValue = 1000
+                        end
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    elseif btnName == "setZero" then
+                        data.editingValue = 0
+                        setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                        data.shouldClearScreen = true
+                        data.needsRedraw = true
+                    end
+                end
+            end
+            
+            return true
+        end
+    end
+
+    local deviceType = getDeviceType(data.editingDevice)
+    if deviceType == "motor" then
+        local slider = UI.motorSlider
+        if y >= slider.y and y < slider.y + slider.height then
+            if x >= slider.x and x < slider.x + slider.width then
+                local relativeX = x - slider.x - 1
+                local percentage = math.max(0, math.min(1, relativeX / (slider.width - 3)))
+                local newAngle = (percentage * 2 * math.pi) - math.pi
+                
+                if math.abs(newAngle - data.editingValue) > 0.01 then
+                    data.editingValue = newAngle
+                    setDeviceValueImmediate(data.editingDevice, data.editingValue)
+                    data.needsRedraw = true
+                    data.isDraggingSlider = true
+                end
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+local function handleEditModeTouch(x, y)
+    for btnName, button in pairs(UI.editButtons) do
+        if isPointInRect(x, y, button) then
+            if btnName == "back" then
+                exitEditMode()
+            elseif btnName == "save" then
+                local faceData = getCurrentFaceData()
+                local keyframe = faceData.keyframes[data.selectedKeyframe]
+                if keyframe then
+                    keyframe.actions = getDeviceValues()
+                    saveHistory()
+                    exitEditMode()
+                end
+            elseif btnName == "scrollUp" then
+                data.scrollOffset = math.max(0, data.scrollOffset - 5)
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            elseif btnName == "scrollDown" then
+                local maxOffset = getTotalItemsCount() - (height - 10) + 5
+                data.scrollOffset = math.min(maxOffset, data.scrollOffset + 5)
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            end
+            
+            return true
+        end
+    end
+    
+    if y >= 4 and y < height - 6 then
+        local clickY = y - 4
+        local maxDevices = height - 10
+        local groupedDevices = getGroupedDevices()
+        local currentIndex = 0
+        local displayY = 0
+        
+        for groupName, deviceGroup in pairs(groupedDevices) do
+            if currentIndex >= data.scrollOffset then
+                if displayY == clickY then
+                    return true
+                end
+                displayY = displayY + 1
+                
+                if displayY > clickY then break end
+                for _, deviceName in ipairs(deviceGroup.names) do
+                    if currentIndex >= data.scrollOffset then
+                        if displayY == clickY then
+                            enterDeviceEditMode(deviceName)
+                            return true
+                        end
+                        displayY = displayY + 1
+                        if displayY > clickY then break end
+                    end
+                    currentIndex = currentIndex + 1
+                end
+                
+                if displayY > clickY then break end
+                displayY = displayY + 1
+            else
+                currentIndex = currentIndex + #deviceGroup.names + 1
+            end
+        end
+    end
+    
+    return false
+end
+
+local function handleMainModeTouch(x, y)
+    for face, button in pairs(UI.faceButtons) do
+        if isPointInRect(x, y, button) then
+            if data.isPlaying then
+                stopPlayback()
+            end
+            
+            data.currentFace = face
+            data.currentTime = 0
+            data.globalTime = 0
+            data.selectedKeyframe = nil
+            data.shouldClearScreen = true
+            data.needsRedraw = true
+            return true
+        end
+    end
+
+    for btnName, button in pairs(UI.buttons) do
+        if isPointInRect(x, y, button) then
+            local faceData = getCurrentFaceData()
+            
+            if btnName == "decTime" then
+                faceData.totalTime = math.max(10, faceData.totalTime - 1)
+                saveHistory()
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            elseif btnName == "incTime" then
+                faceData.totalTime = faceData.totalTime + 1
+                saveHistory()
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            elseif btnName == "dec10Time" then
+                faceData.totalTime = math.max(10, faceData.totalTime - 10)
+                saveHistory()
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            elseif btnName == "inc10Time" then
+                faceData.totalTime = faceData.totalTime + 10
+                saveHistory()
+                data.shouldClearScreen = true
+                data.needsRedraw = true
+            elseif btnName == "play" then
+                togglePlayback()
+            elseif btnName == "addKeyframe" then
+                if addKeyframe() then
+                else
+                    print("Keyframe already exists at this time")
+                end
+            elseif btnName == "saveKeyframe" then
+                saveSelectedKeyframe()
+            elseif btnName == "clearKeyframes" then
+                clearAllKeyframes()
+            elseif btnName == "deleteKeyframe" then
+                deleteSelectedKeyframe()
+            elseif btnName == "loopToggle" then
+                toggleLoopPlay()
+            elseif btnName == "save" then
+                saveData()
+            elseif btnName == "undo" then
+                undo()
+            elseif btnName == "redo" then
+                redo()
+            end
+            
+            return true
+        end
+    end
+    if isPointInRect(x, y, {
+        x = UI.timelineBar.x,
+        y = UI.timelineBar.y,
+        width = UI.timelineBar.width,
+        height = UI.timelineBar.height
+    }) then
+        if data.isPlaying then
+            stopPlayback()
+        end
+        
+        local faceData = getCurrentFaceData()
+        local relativeX = x - UI.timelineBar.x - 1
+        local percentage = math.max(0, math.min(1, relativeX / (UI.timelineBar.width - 3)))
+        local newTime = math.floor(percentage * faceData.totalTime)
+        
+        data.currentTime = newTime
+        if selectKeyframeAtTime(data.currentTime) then
+        else
+            updateDevicesBasedOnGlobalTime()
+            data.shouldClearScreen = true
+            data.needsRedraw = true
+        end
+        
+        return true
+    end
+    
+    if isPointInRect(x, y, {
+        x = UI.keyframeBar.x,
+        y = UI.keyframeBar.y,
+        width = UI.keyframeBar.width,
+        height = UI.keyframeBar.height
+    }) then
+        if data.isPlaying then
+            stopPlayback()
+        end
+        
+        local faceData = getCurrentFaceData()
+        local relativeX = x - UI.keyframeBar.x - 1
+        local percentage = math.max(0, math.min(1, relativeX / (UI.keyframeBar.width - 3)))
+        local targetTime = math.floor(percentage * faceData.totalTime)
+        if selectKeyframeAtTime(targetTime) then
+            return true
+        end
+
+        if data.selectedKeyframe and faceData.keyframes[data.selectedKeyframe] then
+            faceData.keyframes[data.selectedKeyframe].time = targetTime
+            data.currentTime = targetTime
+            saveHistory()
+            data.shouldClearScreen = true
+            data.needsRedraw = true
+        end
+        
+        return true
+    end
+    
+    local bar = UI.actionBar
+    if isPointInRect(x, y, bar) then
+        if data.selectedKeyframe then
+            local faceData = getCurrentFaceData()
+            local keyframe = faceData.keyframes[data.selectedKeyframe]
+            
+            if keyframe then
+                local lineY = bar.y + 2
+                local deviceIndex = 0
+                for deviceName, value in pairs(keyframe.actions) do
+                    if y == lineY then
+                        enterDeviceEditMode(deviceName)
+                        return true
+                    end
+                    lineY = lineY + 1
+                    deviceIndex = deviceIndex + 1
+                    if lineY >= bar.y + bar.height then break end
+                end
+            end
+            
+            enterEditMode()
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function handleTouch(x, y)
+    if data.editDeviceMode then
+        return handleDeviceEditModeTouch(x, y)
+    elseif data.editMode then
+        return handleEditModeTouch(x, y)
+    else
+        return handleMainModeTouch(x, y)
+    end
+end
+
+local function initDeviceAngles()
+    local values = getDeviceValues()
+    for deviceName, value in pairs(values) do
+        local deviceType = getDeviceType(deviceName)
+        if deviceType == "motor" then
+            data.deviceAngles[deviceName] = normalizeAngle(value)
+            data.lastSentAngles[deviceName] = normalizeAngle(value)
+        else
+            data.deviceAngles[deviceName] = value
+            data.lastSentAngles[deviceName] = value
+        end
+        data.lastOutputTime[deviceName] = os.clock()
+    end
+end
+
+local function main()
+    loadData()
+    
+    initDeviceAngles()
+    
+    drawAll()
+    
+
+    parallel.waitForAny(
+        globalTimeThread,
+
+        updateDisplayThread,
+
+        handleRedstone,
+
+        function()
+            while true do
+                local event, side, x, y = os.pullEvent()
+                
+                if event == "monitor_touch" then
+                    handleTouch(x, y)
+                elseif event == "terminate" then
+                    break
+                end
+            end
+        end
+    )
+    saveData()
+end
+
+main()
